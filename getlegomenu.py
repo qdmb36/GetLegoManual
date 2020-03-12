@@ -45,16 +45,18 @@ def fill_search_list(mapinfo):
     print('searching...', search_list)
 
 
-def put_page_to_file(url, filename):
+def put_page_to_file(url, filename, first_page):
     subpage = urllib.request.urlopen(url)
     html_code = subpage.read().decode('utf-8')
+    open_type = 'a'
+    if first_page:
+        open_type = 'w'
     header = ''
-    with open(filename, 'a', encoding='utf-8') as f:
+    with open(filename, open_type, encoding='utf-8') as f:
         m = re.search(r'"moreData":(true|false),"products":\[((?<="products":\[).*?(?=totalCount))', html_code)
         # body start after "products":\[, end before "totalCount"'
         if m is not None:
             header = m.group(1)
-            print(header)
             body = m.group(2)
             f.write(body)
             if header == 'true':
@@ -77,15 +79,23 @@ def get_all_lego_instructions():
 def decode(theme, key):
     finished = False
     page = 0
-    os.mkdir(theme)
+    if not os.path.exists(theme):
+        os.mkdir(theme)
     filename = './' + theme + '/' + theme + '.txt'
+    first_page = True
     while not finished:
         url = 'https://www.lego.com//service/biservice/searchbytheme?fromIndex=' \
               + str(page) + '&onlyAlternatives=false&theme=' + key
-        print(url)
-        finished = put_page_to_file(url, filename)
+        finished = put_page_to_file(url, filename, first_page)
         page += 10
+        first_page = False
     get_jpg_and_pdf_list(filename)
+
+
+def get_png_file(product):
+    pic = re.findall(r'((?<="frontpageInfo":").*?(?="))', product)
+    pic = list(set(pic))
+    return pic
 
 
 def get_jpg_and_pdf_list(file_name):
@@ -99,6 +109,11 @@ def get_jpg_and_pdf_list(file_name):
                 key = m.group(1)
                 name = re.sub('[\W_]+', '', re.search(r'((?<="productName":").*?(?="))', product).group(1))
                 pic = re.search(r'((?<="productImage":").*?(?="))', product).group(1)
+                if re.match(r'.*?jpg$', pic) is None:
+                    print("no valid jpg file get all .png file for", key)
+                    pic = get_png_file(product)
+                    print(pic)
+
                 pdf_str = re.findall(r'((?<=V29).*?(?=.pdf"))', product)
                 pdf_str += re.findall(r'((?<=V. 29).*?(?=.pdf"))', product)
                 pdf_str += re.findall(r'((?<=V.29).*?(?=.pdf"))', product)
@@ -106,6 +121,10 @@ def get_jpg_and_pdf_list(file_name):
                 if not pdf:
                     pdf_str = re.findall(r'((?<=pdfLocation":").*?(?=.pdf"))', product)
                     pdf = [x + '.pdf' for x in pdf_str]
+                if not pdf:
+                    pdf = re.findall(r'((?<=pdfLocation":").*?(?="))', product)
+                    print("try get lost pdf for", key)
+                pdf = list(set(pdf))
                 year = re.search(r'((?<="launchYear":).*?(?=}))', product).group(1)
                 saved_file_name = year + '_' + name + '_' + key
                 csv_rows.append([saved_file_name, pic, pdf])
@@ -118,7 +137,7 @@ def get_jpg_and_pdf_list(file_name):
 def safeurlretrive(url, name):
     try:
         urllib.request.urlretrieve(url, name)
-    except socket.timeout:
+    except socket.timeout as e1:
         count = 1
         while count <= 5:
             try:
@@ -129,6 +148,8 @@ def safeurlretrive(url, name):
                 count += 1
         if count > 5:
             print("downloading ", url, "failed!")
+    except urllib.error.HTTPError as e2:
+        print(e2)
 
 
 def download_lego_instructions(csv_file, dirname):
@@ -137,14 +158,30 @@ def download_lego_instructions(csv_file, dirname):
         for info in row:
             saved_pic_name = dirname + info[0] + '.jpg'
             target_pic = info[1]
-            if not os.path.isfile(saved_pic_name):
+            # for some jpg file not exist in v1.0 so put before file exist check
+            if re.match(r'.*?jpg$', target_pic) is None:
+                print(saved_pic_name, "not valid, get png")
+                k = 1
+                target_png_list = re.sub(r'\[|\]|\'', '', target_pic).split(',')
+                for png in target_png_list:
+                    print(png)
+                    if png == '':
+                        print("no png file")
+                        break
+                    saved_png_name = dirname + info[0] + '_' + str(k) + '.png'
+                    if not os.path.isfile(saved_png_name):
+                        print("file ", saved_png_name, 'finished!')
+                        safeurlretrive(png, saved_png_name)
+                    else:
+                        print("file ", saved_png_name, 'already exist!')
+                    k += 1
+            elif not os.path.isfile(saved_pic_name):
                 safeurlretrive(target_pic, saved_pic_name)
 
             i = 1
             target_pdf_list = re.sub(r'\[|\]|\'', '', info[2]).split(',')
 
             for pdf in target_pdf_list:
-                print(pdf)
                 if pdf == '':
                     print("no pdf file")
                     break
